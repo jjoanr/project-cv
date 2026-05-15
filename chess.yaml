@@ -1,0 +1,22 @@
+# Chess piece detection - YOLOv8
+# Adjust class names to match your dataset's category names
+
+path: ./dataset
+train: images/train
+val: images/val
+
+nc: 12  # number of classes
+
+names:
+  0: white-pawn
+  1: white-knight
+  2: white-bishop
+  3: white-rook
+  4: white-queen
+  5: white-king
+  6: black-pawn
+  7: black-knight
+  8: black-bishop
+  9: black-rook
+  10: black-queen
+  11: black-king

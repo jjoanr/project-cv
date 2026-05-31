@@ -3,16 +3,21 @@ Extract enlarged piece crops from refined chessboard warps.
 
 The crop is centered on the labeled square but includes neighboring context so
 pieces are not cut off when perspective makes them extend outside the square.
-Only occupied squares from the JSON config are exported.
+All occupied squares are exported. Empty squares use the "empty" label and are
+limited per board by default so the training set does not get dominated by
+empty examples. By default the output is organized by class, which is the
+layout expected by most training loaders.
 
 Examples:
-  python extract_piece_crops.py --images 0,1,10
-  python extract_piece_crops.py --images 0,1,10 --crop-scale 2.2
+  python extract_piece_crops.py
+  python extract_piece_crops.py --images 0,1,10 --save-debug
+  python extract_piece_crops.py --images all --crop-scale 2.2
 """
 
 from __future__ import annotations
 
 import argparse
+import random
 from pathlib import Path
 
 import cv2
@@ -40,8 +45,14 @@ WHITE = (255, 255, 255)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", default="Dataset/data")
-    parser.add_argument("--out-dir", default="Dataset/piece_crops_debug")
-    parser.add_argument("--images", default="0,1,10", help="Comma-separated numeric image stems.")
+    parser.add_argument("--out-dir", default="Dataset/piece_crops")
+    parser.add_argument("--images", default="all", help="Comma-separated numeric image stems, or 'all'.")
+    parser.add_argument("--layout", choices=("by-piece", "by-image"), default="by-piece")
+    parser.add_argument("--save-debug", action="store_true", help="Also save annotated crops and contact sheets.")
+    parser.add_argument("--occupied-only", action="store_true", help="Export only squares labeled with pieces in JSON.")
+    parser.add_argument("--empty-label", default="empty")
+    parser.add_argument("--max-empty-per-board", type=int, default=3)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--corner-format", choices=("yx", "xy"), default="yx")
     parser.add_argument("--warp-size", type=int, default=640)
     parser.add_argument("--crop-scale", type=float, default=2.2, help="Crop size as a multiple of one square.")
@@ -55,6 +66,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-move-ratio", type=float, default=0.08)
     parser.add_argument("--steps", default="32,16,8,4,2")
     return parser.parse_args()
+
+
+def image_stems(data_dir: Path, images_arg: str) -> list[str]:
+    if images_arg.strip().lower() != "all":
+        return [item.strip() for item in images_arg.split(",") if item.strip()]
+
+    stems = []
+    for image_path in data_dir.glob("*.jpg"):
+        if (data_dir / f"{image_path.stem}.json").exists():
+            stems.append(image_path.stem)
+
+    return sorted(stems, key=lambda stem: (not stem.isdigit(), int(stem) if stem.isdigit() else stem))
+
+
+def safe_class_name(label: str) -> str:
+    return "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in label)
 
 
 def square_to_row_col(target: str, notation: str) -> tuple[int, int]:
@@ -140,7 +167,8 @@ def process_image(stem: str, args: argparse.Namespace) -> None:
 
     initial = load_json_corners(json_path, image.shape, args.corner_format)
     config = load_json_config(json_path)
-    occupied_names = {name.upper() for name in config}
+    config = {name.upper(): label for name, label in config.items()}
+    occupied_names = set(config)
 
     steps = [int(item) for item in args.steps.split(",") if item.strip()]
     refined, _score = refine_corners(
@@ -159,41 +187,67 @@ def process_image(stem: str, args: argparse.Namespace) -> None:
     crop_size = square * args.crop_scale
     warp_margin = int(round(square * args.warp_margin_scale))
     warp = warp_board_with_margin(image, refined, args.warp_size, warp_margin)
-    raw_dir = out_dir / stem / "piece_crop"
+    image_dir = out_dir / stem / "piece_crop"
     debug_dir = out_dir / stem / "debug"
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    debug_dir.mkdir(parents=True, exist_ok=True)
+    if args.layout == "by-image":
+        image_dir.mkdir(parents=True, exist_ok=True)
+    if args.save_debug:
+        debug_dir.mkdir(parents=True, exist_ok=True)
 
     debug_images = []
     debug_labels = []
-    for square_label in sorted(occupied_names):
+    occupied_labels = sorted(occupied_names)
+    empty_labels = [
+        square_name(row, col, notation)
+        for row in range(8)
+        for col in range(8)
+        if square_name(row, col, notation) not in occupied_names
+    ]
+    if args.occupied_only:
+        square_labels = occupied_labels
+    else:
+        rng = random.Random(f"{args.seed}:{stem}")
+        rng.shuffle(empty_labels)
+        selected_empty = sorted(empty_labels[: max(0, args.max_empty_per_board)])
+        square_labels = sorted(occupied_labels + selected_empty)
+
+    for square_label in square_labels:
         row, col = square_to_row_col(square_label, notation)
         cx = warp_margin + (col + 0.5) * square
         cy = warp_margin + (row + 0.5) * square
         crop, _bounds = crop_with_padding(warp, cx, cy, crop_size)
         crop_resized = cv2.resize(crop, (args.out_size, args.out_size), interpolation=cv2.INTER_AREA)
 
-        piece_label = config[square_label]
+        piece_label = config.get(square_label, args.empty_label)
         file_stem = f"{stem}_{square_label}_{piece_label}"
+        if args.layout == "by-piece":
+            raw_dir = out_dir / safe_class_name(piece_label)
+            raw_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            raw_dir = image_dir
         cv2.imwrite(str(raw_dir / f"{file_stem}.jpg"), crop_resized)
 
-        debug = draw_debug_crop(crop_resized, args.out_size, args.crop_scale, f"{square_label} {piece_label}")
-        cv2.imwrite(str(debug_dir / f"{file_stem}_debug.jpg"), debug)
-        debug_images.append(debug)
-        debug_labels.append(square_label)
+        if args.save_debug:
+            debug = draw_debug_crop(crop_resized, args.out_size, args.crop_scale, f"{square_label} {piece_label}")
+            cv2.imwrite(str(debug_dir / f"{file_stem}_debug.jpg"), debug)
+            debug_images.append(debug)
+            debug_labels.append(square_label)
 
-    make_contact_sheet(debug_images, debug_labels, out_dir / stem / f"{stem}_contact_sheet.jpg")
+    if args.save_debug:
+        make_contact_sheet(debug_images, debug_labels, out_dir / stem / f"{stem}_contact_sheet.jpg")
 
     print(f"image={stem}")
     print(f"notation={notation}")
     print("orientation_scores=" + ",".join(f"{name}:{score:.3f}" for name, score in sorted(orientation_scores.items())))
     print(f"occupied_crops={len(occupied_names)}")
-    print(raw_dir.resolve())
+    print(f"empty_crops={sum(1 for square_label in square_labels if square_label not in occupied_names)}")
+    print(f"exported_crops={len(square_labels)}")
+    print(out_dir.resolve())
 
 
 def main() -> None:
     args = parse_args()
-    stems = [item.strip() for item in args.images.split(",") if item.strip()]
+    stems = image_stems(Path(args.data), args.images)
     for stem in stems:
         process_image(stem, args)
 

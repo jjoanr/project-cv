@@ -1,0 +1,25 @@
+Epoch 14/15 | Train Acc: 1.0000 | Val Acc: 0.7992
+Training: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 30/30 [01:03<00:00,  2.13s/it, loss=0.0000, acc=1.0000]
+Epoch 15/15 | Train Acc: 1.0000 | Val Acc: 0.7938
+
+--- Generating Final Confusion Matrix on Holdout Set ---
+
+              precision    recall  f1-score   support
+
+    bishop_b       0.81      0.66      0.73       182
+    bishop_w       0.86      0.66      0.75       182
+       empty       1.00      1.00      1.00        54
+      king_b       0.76      0.57      0.65       182
+      king_w       0.46      0.67      0.54       182
+    knight_b       0.68      0.93      0.79       182
+    knight_w       0.91      0.87      0.89       182
+      pawn_b       0.89      0.90      0.90       182
+      pawn_w       0.97      0.95      0.96       182
+     queen_b       0.67      0.81      0.73       182
+     queen_w       0.62      0.58      0.60       182
+      rook_b       0.89      0.67      0.76       182
+      rook_w       0.79      0.79      0.79       182
+
+    accuracy                           0.76      2238
+   macro avg       0.79      0.77      0.78      2238
+weighted avg       0.78      0.76      0.76      2238

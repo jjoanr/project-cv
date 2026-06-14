@@ -153,7 +153,16 @@ def main() -> None:
         print(f"No s'han trobat imatges a {IMAGES_DIR}")
         return
 
-    print(f"Trobades {len(image_paths)} imatges.")
+    # Imatges ja processades: busca qualsevol crop amb el mateix stem a peces_segmentades
+    already_done = {p.stem.rsplit("_r", 1)[0] for p in OUT_DIR.rglob("*.jpg")}
+
+    pending = [p for p in image_paths if p.stem not in already_done]
+    skipped = len(image_paths) - len(pending)
+
+    print(f"Trobades {len(image_paths)} imatges ({skipped} ja processades, {len(pending)} pendents).")
+    if not pending:
+        print("Totes les imatges ja estan processades.")
+        return
     print("Ordre de clics: A1 (baix-esquerra) -> H1 -> H8 -> A8 (dalt-esquerra)")
     print("ESC per saltar una imatge. R per reiniciar els clics.")
     print()
@@ -161,8 +170,8 @@ def main() -> None:
     # Comptar quants crops tenim per classe al final
     class_counts: dict[str, int] = {}
 
-    for img_idx, img_path in enumerate(image_paths):
-        print(f"[{img_idx+1}/{len(image_paths)}] {img_path.name}")
+    for img_idx, img_path in enumerate(pending):
+        print(f"[{img_idx+1}/{len(pending)}] {img_path.name}")
 
         image = cv2.imread(str(img_path))
         if image is None:

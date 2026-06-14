@@ -351,10 +351,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--weights", default="model/proto_resnet18_best.pth")
     p.add_argument("--backbone", choices=["resnet18", "resnet50"], default="resnet18")
     p.add_argument("--support-dir", default="Dataset/piece_crops")
-    p.add_argument("--k-shot", type=int, default=10)
+    p.add_argument("--k-shot", type=int, default=30)
     p.add_argument("--out-dir", default="inference_output")
     p.add_argument("--warp-size", type=int, default=640)
-    p.add_argument("--crop-scale", type=float, default=2.2)
+    p.add_argument("--crop-scale", type=float, default=1.4)
     p.add_argument("--empty-bias", type=float, default=0.85)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-refine", action="store_true",

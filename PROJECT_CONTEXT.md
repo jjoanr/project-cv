@@ -14,44 +14,91 @@ El sistema ha de funcionar no només per peces estàndard, sinó per **qualsevol
 - **Dataset A (sintètic)**: fotos reals d'un tauler físic amb peces estàndard, posicions generades aleatòriament. Cada imatge té un JSON amb les coordenades de les 4 cantonades del tauler i la posició de cada peça. ~400 MB a `Dataset/data/`.
 - **13 classes**: king_w, queen_w, rook_w, bishop_w, knight_w, pawn_w, king_b, queen_b, rook_b, bishop_b, knight_b, pawn_b, empty.
 - El pipeline d'entrenament usava el JSON per detectar i segmentar les 64 caselles (`extract_piece_crops.py` + `refine_graella.py`).
-- El model és una **Prototypical Network** amb backbone ResNet-18 (`train_few_shot.py`). Pesos: `proto_resnet18_best.pth`.
+- El model és una **Prototypical Network** amb backbone ResNet-18 (`train_few_shot.py`). Pesos a la carpeta `model/`.
 - Com que el dataset sintètic és molt similar a peces físiques reals estàndard, s'espera que el model funcioni bé sobre fotos de peces físiques reals estàndard **sense reentrenament**.
 
 ---
 
 ## Pipeline d'inferència (`inference.py`)
 
-1. **Detecció del tauler**: trobar les 4 cantonades a la foto
-2. **Correcció de perspectiva**: warp del tauler a una imatge quadrada
+1. **Detecció del tauler**: l'usuari clica manualment les 4 cantonades en ordre **A1 → H1 → H8 → A8**
+2. **Correcció de perspectiva**: warp del tauler a una imatge quadrada (orientació "a8_tl")
 3. **Segmentació**: retallar les 64 caselles individuals
 4. **Classificació few-shot**: per cada casella, trobar el prototip més proper
 5. **Reconstrucció**: generar FEN + render digital del tauler
 
+### Execució local
+
+```bash
+python inference.py --image Dataset/data/1856.jpg
+```
+
+El default de `--weights` apunta a `model/proto_resnet18_best.pth`.  
+Per canviar el model: `--weights model/proto_resnet18_finetuned.pth`  
+Per canviar el backbone: `--backbone resnet50`
+
+### Models disponibles (`model/`)
+
+| Fitxer | Descripció |
+|--------|-----------|
+| `proto_resnet18_best.pth` | Model principal — **millor rendiment** |
+| `proto_resnet18_finetuned.pth` | Fine-tuning posterior — rendiment inferior |
+| `proto_resnet18_minimal_data.pth` | Entrenament amb dades mínimes |
+
 ---
 
-## Problemes actuals i solucions proposades
+## Avaluació de prediccions (`eval_predictions.py`)
 
-### Problema 1: Detecció de cantonades sense JSON
+Script que compara els JSONs de `inference_output/` amb els ground truth de `Dataset/data/`.  
+Prova automàticament les 4 rotacions (0°, 90° CW, 180°, 90° CCW) i tria la millor per cada tauler.
 
-Per a les fotos d'inferència (Dataset A no usat en entrenament, peces físiques reals, Dataset B), **no hi ha JSON**. La detecció automàtica per visió per computador (Hough lines, contorns) no és prou robusta per a fons complexos (rajoles, taules, etc.).
+### Resultats sobre 6 taulers del dataset (1851–1856)
 
-**Solució acordada**: quan l'usuari executa el programa, el programa obre la imatge i demana que l'usuari **cliqui manualment les 4 cantonades** del tauler.
+#### Model `proto_resnet18_best.pth` (MILLOR)
 
-### Problema 2: Orientació del tauler
+| Tauler | Rotació detectada | Encerts | Acc. | Peça ok/Color ≠ | Errors |
+|--------|------------------|---------|------|-----------------|--------|
+| 1851 | 0° | 64/64 | 100% | 0 | 0 |
+| 1852 | 180° | 45/64 | 70.3% | 16 | 3 |
+| 1853 | 90° CW | 60/64 | 93.8% | 4 | 0 |
+| 1854 | 180° | 54/64 | 84.4% | 1 | 9 |
+| 1855 | 0° | 62/64 | 96.9% | 2 | 0 |
+| 1856 | 180° | 54/64 | 84.4% | 1 | 9 |
+| **TOTAL** | — | **339/384** | **88.3%** | 24 | 21 |
 
-Sense saber l'angle de la foto, no es pot determinar quina cantonada és A1, H1, A8, H8.
+#### Model `proto_resnet18_finetuned.pth` (PITJOR)
 
-**Solució acordada**: l'usuari clica les 4 cantonades **en ordre específic**: A1 → H1 → H8 → A8 (o similar, a definir). Això elimina l'ambigüitat d'orientació.
+| Tauler | Rotació detectada | Encerts | Acc. |
+|--------|------------------|---------|------|
+| 1851 | 0° | 42/64 | 65.6% |
+| 1852 | 180° | 29/64 | 45.3% |
+| 1853 | 90° CW | 43/64 | 67.2% |
+| 1854 | 180° | 46/64 | 71.9% |
+| 1855 | 0° | 47/64 | 73.4% |
+| 1856 | 180° | 31/64 | 48.4% |
+| **TOTAL** | — | **238/384** | **62.0%** |
+
+### Observacions sobre les rotacions
+
+- **1851** i **1855**: orientació correcta (A1 clicat a baix-esquerra)
+- **1852**, **1854**, **1856**: tauler rotat **180°** (A1 clicat a la cantonada oposada)
+- **1853**: tauler rotat **90° CW**
+- Per evitar errors d'orientació, assegurar-se de clicar **A1 primer** (cantonada inferior-esquerra des del punt de vista de les blanques)
+
+### Tipus d'errors típics
+
+- **Color incorrecte** (peça ok, _w vs _b): molt freqüent quan el tauler és rotat 180° — el model veu les peces blanques des del costat negre
+- **Errors complets**: menys freqüents; principalment confusions entre peces similars (rook/queen, bishop/king)
 
 ---
 
-## Pla de validació (per ordre de prioritat)
+## Pla de validació
 
-### Fase 1 — Verificació del model (PRIORITAT ACTUAL)
+### Fase 1 — Verificació del model (COMPLETADA)
 
-1. Fer que `inference.py` funcioni amb selecció manual de cantonades (clic de l'usuari)
-2. Provar sobre imatges del Dataset A **no usades en entrenament** — hauria d'encertar quasi tot
-3. Provar sobre fotos reals de peces estàndard físiques — s'espera bona accuracy sense reentrenament
+- `inference.py` funciona amb selecció manual de cantonades
+- Provat sobre imatges del Dataset A (1851–1856) — accuracy 88.3% amb `proto_resnet18_best.pth`
+- Vegeu taula de resultats a la secció anterior
 
 ### Fase 2 — Few-shot amb peces noves (Dataset B)
 
@@ -64,7 +111,6 @@ Dues aproximacions a provar:
 
 **B) Fine-tuning lleuger** (alternativa)
 - Amb les 5–10 imatges de les noves peces, fer unes poques epochs d'entrenament addicional sobre el model existent
-- Proves fetes: bona accuracy
 - Terminologia correcta: sí, això és **fine-tuning**
 
 ### Com proporcionar les imatges de referència per Dataset B
@@ -86,15 +132,8 @@ Fer 5–10 fotos del tauler en posició inicial de partida (la posició estànda
 | `extract_piece_crops.py` | Fet — segmenta i organitza per classe |
 | `refine_graella.py` | Fet — corregeix perspectiva a partir de cantonades |
 | `train_few_shot.py` | Fet — entrenament episòdic Prototypical Network |
-| `proto_resnet18_best.pth` | Fet — pesos del model entrenat |
-| `inference.py` | Parcialment fet — funciona amb JSON, **falta selecció manual de cantonades** |
-
----
-
-## Propera tasca immediata
-
-Implementar a `inference.py` la **selecció manual de cantonades per clic**:
-- Obrir la foto en una finestra OpenCV
-- L'usuari clica les 4 cantonades en ordre (A1, H1, H8, A8)
-- El programa continua amb el pipeline normal
-- Això elimina la necessitat de JSON i resol l'orientació alhora
+| `model/proto_resnet18_best.pth` | Fet — millors pesos |
+| `model/proto_resnet18_finetuned.pth` | Fet — fine-tuning, rendiment inferior |
+| `model/proto_resnet18_minimal_data.pth` | Fet — pesos amb dades mínimes |
+| `inference.py` | Fet — selecció manual de cantonades per clic |
+| `eval_predictions.py` | Fet — comparació prediccions vs ground truth amb detecció de rotació |

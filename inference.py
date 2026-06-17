@@ -1,14 +1,3 @@
-"""
-Chess inference: photo → FEN + digital board.
-
-Usage:
-  python inference.py --image my_board.jpg
-
-The program opens an interactive window where the user clicks the 4 board
-corners in order: A1 → H1 → H8 → A8.
-This defines both the board position and the orientation unambiguously.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -31,7 +20,7 @@ from refine_graella import (
 )
 
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# Constants
 
 PIECE_TO_FEN = {
     "king_w": "K", "queen_w": "Q", "rook_w": "R",
@@ -53,11 +42,10 @@ SQ_DARK     = (119, 149,  86)
 BOARD_CELL  = 80
 BOARD_MARGIN = 28
 
-# Corner labels shown to the user during interactive selection
+# Corner labels shown during interactive selection
 CORNER_LABELS = ["A1  (baix-esquerra)", "H1  (baix-dreta)", "H8  (dalt-dreta)", "A8  (dalt-esquerra)"]
 
-
-# ── Model ─────────────────────────────────────────────────────────────────────
+# Model
 
 class PrototypicalNet(nn.Module):
     def __init__(self, backbone_name: str = "resnet18"):
@@ -75,7 +63,7 @@ class PrototypicalNet(nn.Module):
         return self.backbone(x)
 
 
-# ── Interactive corner selection ───────────────────────────────────────────────
+# Interactive corner selection
 
 def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
     """
@@ -83,9 +71,9 @@ def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
     A1, H1, H8, A8.
 
     Returns corners as (4, 2) float32 array ordered [A8, H8, H1, A1],
-    which is [TL, TR, BR, BL] in the warped output — giving "a8_tl" orientation.
-    Press R to reset clicks, ESC to cancel.
+    which is [TL, TR, BR, BL] in the warped output    
     """
+
     h, w = image.shape[:2]
     max_display = 900
     scale = min(1.0, max_display / max(h, w))
@@ -95,7 +83,7 @@ def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
     clicks: list[tuple[int, int]] = []  # original-image pixel coords
 
     COLORS = [(0, 255, 255), (0, 200, 255), (255, 100, 0), (0, 255, 0)]
-    WIN = "Seleccio de cantonades — R: reiniciar  |  ESC: cancellar"
+    WIN = "Seleccio de cantonades - R: reiniciar  |  ESC: cancellar"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN, disp_w, disp_h)
 
@@ -157,7 +145,7 @@ def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
     return np.array([a8, h8, h1, a1], dtype=np.float32)
 
 
-# ── Support set ───────────────────────────────────────────────────────────────
+# Support set (k-shot learning)
 
 INFER_TRANSFORM = transforms.Compose([
     transforms.ToPILImage(),
@@ -177,8 +165,15 @@ def load_support_images(support_dir: Path, k_shot: int, seed: int) -> dict[str, 
         if not paths:
             continue
         rng.shuffle(paths)
-        imgs = [cv2.imread(str(p)) for p in paths[:k_shot]]
-        imgs = [img for img in imgs if img is not None]
+        
+        imgs = []
+        for p in paths[:k_shot]:
+            img = cv2.imread(str(p))
+            if img is not None:
+                # Convert BGR to RGB so it matches training data format
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                imgs.append(img)
+                
         if imgs:
             support[class_dir.name] = imgs
     return support
@@ -198,7 +193,7 @@ def compute_prototypes(
     return torch.cat(protos, dim=0), class_names
 
 
-# ── Square extraction ─────────────────────────────────────────────────────────
+# Square extraction
 
 def extract_square_crops(
     warped: np.ndarray,
@@ -218,13 +213,18 @@ def extract_square_crops(
             y0 = max(0, int(round(cy - half)))
             x1 = min(warped.shape[1], int(round(cx + half)))
             y1 = min(warped.shape[0], int(round(cy + half)))
-            crop = cv2.resize(warped[y0:y1, x0:x1], (192, 192), interpolation=cv2.INTER_AREA)
-            row_crops.append(crop)
+            
+            crop = warped[y0:y1, x0:x1]
+            # Convert crop to RGB for the model
+            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            
+            crop_resized = cv2.resize(crop_rgb, (192, 192), interpolation=cv2.INTER_AREA)
+            row_crops.append(crop_resized)
         crops.append(row_crops)
     return crops
 
 
-# ── Classification ────────────────────────────────────────────────────────────
+# Classification
 
 @torch.no_grad()
 def classify_board(
@@ -257,7 +257,7 @@ def classify_board(
     return preds
 
 
-# ── FEN ───────────────────────────────────────────────────────────────────────
+# FEN (chess notation)
 
 def predictions_to_fen(grid: list[list[str]], notation: str) -> str:
     board: dict[str, str] = {}
@@ -285,15 +285,26 @@ def predictions_to_fen(grid: list[list[str]], notation: str) -> str:
     return "/".join(rows)
 
 
-# ── Board render ──────────────────────────────────────────────────────────────
+# Board gui generation
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
-    for path in ["C:/Windows/Fonts/seguisym.ttf", "C:/Windows/Fonts/segoeui.ttf",
-                 "C:/Windows/Fonts/arial.ttf"]:
+    for path in [
+        # Linux paths
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        # Windows paths
+        "C:/Windows/Fonts/seguisym.ttf", 
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        # macOS paths
+        "/Library/Fonts/Arial Unicode.ttf"
+    ]:
         try:
             return ImageFont.truetype(path, size)
         except Exception:
             continue
+    
+    print("WARNING: No suitable Unicode font found. Pieces may not render.")
     return ImageFont.load_default()
 
 
@@ -343,15 +354,15 @@ def render_board(grid: list[list[str]], notation: str, out_path: Path) -> None:
     print(f"Tauler digital guardat → {out_path}")
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Chess inference: photo → FEN + digital board")
     p.add_argument("--image", required=True, help="Foto del tauler d'escacs")
     p.add_argument("--weights", default="model/proto_resnet18_best.pth")
     p.add_argument("--backbone", choices=["resnet18", "resnet50"], default="resnet18")
-    p.add_argument("--support-dir", default="Dataset/piece_crops")
-    p.add_argument("--k-shot", type=int, default=30)
+    p.add_argument("--support-dir", default="Dataset/Imatges_propies/peces_segmentades_recrop")
+    p.add_argument("--k-shot", type=int, default=120)
     p.add_argument("--out-dir", default="inference_output")
     p.add_argument("--warp-size", type=int, default=640)
     p.add_argument("--crop-scale", type=float, default=1.4)
@@ -370,26 +381,23 @@ def main() -> None:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Carregar imatge
+    # Carregar imatge
     image = cv2.imread(args.image)
     if image is None:
         raise FileNotFoundError(args.image)
     print(f"Imatge carregada: {args.image}  ({image.shape[1]}×{image.shape[0]})")
 
-    # 2. Selecció interactiva de cantonades
-    # L'usuari clica: A1 → H1 → H8 → A8
-    # Retorna [A8, H8, H1, A1] = [TL, TR, BR, BL] → orientació "a8_tl"
+    # Selecció interactiva de cantonades
     print("Obre finestra per seleccionar les 4 cantonades...")
     corners = pick_corners_interactive(image)
     notation = "a8_tl"
 
-    # 3. Refinament opcional
     if not args.no_refine:
         max_move = board_side(corners) * 0.08
         corners, score = refine_corners(image, corners, args.warp_size, [32, 16, 8, 4, 2], max_move)
         print(f"Refinament de cantonades: score={score:.3f}")
 
-    # 4. Warp del tauler
+    # Warp del tauler
     warp_margin = int(round(args.warp_size / 8.0 * 0.8))
     warped = warp_board_with_margin(image, corners, args.warp_size, warp_margin)
     warped_plain = warp_board(image, corners, args.warp_size)
@@ -398,13 +406,13 @@ def main() -> None:
     cv2.imwrite(str(out_dir / f"{stem}_warped.jpg"), warped_plain)
     print(f"Warp guardat → {out_dir / f'{stem}_warped.jpg'}")
 
-    # 5. Carregar model
+    # Carregar model
     print(f"Carregant model: {args.weights}")
     model = PrototypicalNet(backbone_name=args.backbone).to(device)
     model.load_state_dict(torch.load(args.weights, map_location=device))
     model.eval()
 
-    # 6. Prototips del support set (peces estàndard)
+    # Prototips del support set (fewshot learning)
     support_dir = Path(args.support_dir)
     print(f"Support set: {support_dir}  (k={args.k_shot})")
     support = load_support_images(support_dir, args.k_shot, args.seed)
@@ -413,21 +421,21 @@ def main() -> None:
     prototypes, class_names = compute_prototypes(model, support, device)
     print(f"Prototips calculats per {len(class_names)} classes.")
 
-    # 7. Classificació de les 64 caselles
+    # Classificacio de les 64 caselles individualment
     print("Classificant caselles...")
     crops = extract_square_crops(warped, args.warp_size, args.crop_scale, warp_margin)
     predictions = classify_board(model, prototypes, class_names, crops, device,
                                  empty_bias=args.empty_bias)
 
-    # 8. FEN
+    # notacio FEN
     fen = predictions_to_fen(predictions, notation)
     print(f"\nFEN: {fen}\n")
     (out_dir / "position.fen").write_text(fen)
 
-    # 9. Render digital
+    # Render digital
     render_board(predictions, notation, out_dir / f"{stem}_board.jpg")
 
-    # 10. Guardar prediccions per casella (per avaluació posterior)
+    # Guardar prediccions per casella (per avaluació posterior)
     pred_dict = {}
     for row_idx, row in enumerate(predictions):
         for col_idx, piece in enumerate(row):
@@ -438,7 +446,7 @@ def main() -> None:
     pred_path.write_text(_json.dumps(pred_dict, indent=2))
     print(f"Prediccions guardades → {pred_path}")
 
-    # 11. Resum per terminal
+    # print de logs
     print("\nPredicció per rank:")
     for row_idx, row in enumerate(predictions):
         rank = 8 - row_idx

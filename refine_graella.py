@@ -1,15 +1,3 @@
-"""
-Refine a chessboard grid starting from approximate JSON corners.
-
-The JSON corners are treated as an initialization only. The script searches for
-small corner corrections that make a perspective-correct 8x8 grid align with
-image edges in the warped board view.
-
-Examples:
-  python refine_graella.py --image Dataset/data/0.jpg --json Dataset/data/0.json
-  python refine_graella.py --image Dataset/data/0.jpg --json Dataset/data/0.json --labels
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -189,8 +177,7 @@ def score_corners(image: np.ndarray, corners: np.ndarray, initial: np.ndarray, w
     warped = warp_board(image, corners, warp_size)
     grad_x, grad_y = edge_maps(warped)
 
-    # Ignore a little of the outside border. It often contains the wooden frame,
-    # which is useful but should not dominate all internal grid evidence.
+    # Ignore a little of the outside border (often contains the wooden frame)
     margin = max(4, warp_size // 80)
     gx = grad_x[margin : warp_size - margin, :]
     gy = grad_y[:, margin : warp_size - margin]
@@ -202,7 +189,6 @@ def score_corners(image: np.ndarray, corners: np.ndarray, initial: np.ndarray, w
     vertical_scores = [line_band_score(vertical_profile, pos, radius) for pos in positions]
     horizontal_scores = [line_band_score(horizontal_profile, pos, radius) for pos in positions]
 
-    # Internal lines matter most for fixing skew; outer lines are often a frame.
     weights = np.array([0.65, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.65], dtype=np.float32)
     data_score = float(np.dot(vertical_scores, weights) + np.dot(horizontal_scores, weights))
     close_penalty = float(np.mean((movement / max_move) ** 2)) if max_move > 0 else 0.0

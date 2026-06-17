@@ -1,16 +1,3 @@
-"""
-Segmenta les peces de les imatges pròpies en posició inicial d'escacs.
-
-Per cada imatge:
-  1. L'usuari clica les 4 cantonades aproximades (A1 -> H1 -> H8 -> A8)
-  2. Es refinen les cantonades automàticament
-  3. S'extreuen els 64 crops amb la posició inicial coneguda
-  4. Es guarden a Dataset/Imatges_propies/peces_segmentades/<classe>/
-
-Ús:
-  python extract_own_pieces.py
-"""
-
 from __future__ import annotations
 
 import random
@@ -21,14 +8,14 @@ import numpy as np
 
 from refine_graella import board_side, refine_corners, warp_board_with_margin
 
-# ── Configuració ──────────────────────────────────────────────────────────────
+# Config
 
-IMAGES_DIR  = Path("Dataset/Imatges_propies")
-OUT_DIR     = Path("Dataset/Imatges_propies/peces_segmentades")
+IMAGES_DIR  = Path("Dataset/Figures_reis")
+OUT_DIR     = Path("Dataset/Figures_reis/segmentades")
 WARP_SIZE   = 640
 CROP_SIZE   = 192
-CROP_SCALE  = 1.8
-MAX_EMPTY   = 5   # màxim de caselles buides guardades per imatge
+CROP_SCALE  = 1.4
+# MAX_EMPTY   = 5   # màxim de caselles buides guardades per imatge (per no desbalancejar el dataset)
 
 # Posició inicial d'escacs: fila 0 = rank 8, fila 7 = rank 1, col 0 = A
 INITIAL_POSITION: list[list[str]] = [
@@ -50,7 +37,7 @@ CORNER_LABELS = [
 ]
 
 
-# ── Selecció interactiva de cantonades (igual que inference.py) ──────────────
+# Selecció interactiva de cantonades
 
 def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
     h, w = image.shape[:2]
@@ -61,7 +48,7 @@ def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
 
     clicks: list[tuple[int, int]] = []
     COLORS = [(0, 255, 255), (0, 200, 255), (255, 100, 0), (0, 255, 0)]
-    WIN = "Cantonades — R: reiniciar  |  ESC: saltar imatge"
+    WIN = "Cantonades"
     cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WIN, disp_w, disp_h)
 
@@ -119,7 +106,7 @@ def pick_corners_interactive(image: np.ndarray) -> np.ndarray:
     return np.array([a8, h8, h1, a1], dtype=np.float32)
 
 
-# ── Extracció de crops ────────────────────────────────────────────────────────
+# Extracció de crops (caselles)
 
 def extract_square_crops(warped: np.ndarray, warp_size: int, crop_scale: float, margin: int) -> list[list[np.ndarray]]:
     square = warp_size / 8.0
@@ -141,7 +128,7 @@ def extract_square_crops(warped: np.ndarray, warp_size: int, crop_scale: float, 
     return crops
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main
 
 def main() -> None:
     image_paths = sorted(
@@ -178,24 +165,25 @@ def main() -> None:
             print(f"  No s'ha pogut llegir la imatge, saltant.")
             continue
 
-        # 1. Clic manual de les cantonades
+        # Clic de les cantonades
         corners = pick_corners_interactive(image)
         if corners is None:
             print(f"  Saltada per l'usuari.")
             continue
 
-        # 2. Refinament automàtic de cantonades
+        # Refinament de cantonades
         max_move = board_side(corners) * 0.08
         corners, score = refine_corners(image, corners, WARP_SIZE, [32, 16, 8, 4, 2], max_move)
         print(f"  Refinament: score={score:.1f}")
 
-        # 3. Warp amb marge
+        # Warp amb marge
         margin = int(round(WARP_SIZE / 8.0 * 0.8))
         warped = warp_board_with_margin(image, corners, WARP_SIZE, margin)
 
-        # 4. Extracció dels 64 crops
+        # Extracció dels 64 crops
         crops = extract_square_crops(warped, WARP_SIZE, CROP_SCALE, margin)
 
+        """
         # 5. Seleccionar quines caselles buides guardar (màx MAX_EMPTY)
         empty_positions = [
             (row, col)
@@ -205,12 +193,23 @@ def main() -> None:
         ]
         rng = random.Random(img_idx)
         selected_empty = set(rng.sample(empty_positions, min(MAX_EMPTY, len(empty_positions))))
+        """
 
-        # 6. Guardar crops
+        # Guardar crops
         saved = 0
         for row in range(8):
             for col in range(8):
                 piece = INITIAL_POSITION[row][col]
+                class_dir = OUT_DIR / piece
+                class_dir.mkdir(parents=True, exist_ok=True)
+
+                fname = f"{img_path.stem}_r{row}c{col}.jpg"
+                out_path = class_dir / fname
+                cv2.imwrite(str(out_path), crops[row][col])
+                saved += 1
+                class_counts[piece] = class_counts.get(piece, 0) + 1
+
+                """
                 if piece == "empty" and (row, col) not in selected_empty:
                     continue
 
@@ -222,6 +221,7 @@ def main() -> None:
                 cv2.imwrite(str(out_path), crops[row][col])
                 saved += 1
                 class_counts[piece] = class_counts.get(piece, 0) + 1
+                """
 
         print(f"  Guardats {saved} crops.")
 

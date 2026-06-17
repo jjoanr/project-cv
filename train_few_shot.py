@@ -24,8 +24,8 @@ def set_seed(seed):
 
 class EpisodicBatchSampler(Sampler):
     """
-    Samples batches for episodic training.
-    Each batch contains `n_way` classes, and for each class, `k_shot + q_query` samples.
+    Samples batches for episodic training (prototypical network)
+    Each batch has data for the 13 classes (pieces + empty square), and for each class, k_shot + q_query samples
     """
 
     def __init__(self, labels, n_way, k_shot, q_query, n_episodes):
@@ -40,7 +40,7 @@ class EpisodicBatchSampler(Sampler):
         for i, label in enumerate(labels):
             self.indices_per_class[label].append(i)
 
-        # Check if we have enough samples per class
+        # Check if we have enough samples per class (enough for support + query set)
         for c in self.classes:
             assert len(self.indices_per_class[c]) >= k_shot + q_query, \
                 f"Class {c} has only {len(self.indices_per_class[c])} samples, but need {k_shot + q_query}"
@@ -51,7 +51,7 @@ class EpisodicBatchSampler(Sampler):
     def __iter__(self):
         for _ in range(self.n_episodes):
             batch = []
-            # Sample n_way classes
+            # Sample for each class
             classes = random.sample(self.classes, self.n_way)
             for c in classes:
                 # Sample k_shot + q_query images from this class
@@ -62,11 +62,9 @@ class EpisodicBatchSampler(Sampler):
 
 def get_euclidean_distances(x, y):
     """
-    Computes pairwise Euclidean distances between x and y.
-    x: (n, d)
-    y: (m, d)
-    Returns: (n, m)
+    Computes pairwise Euclidean distances between x and y
     """
+
     n = x.size(0)
     m = y.size(0)
     d = x.size(1)
@@ -86,12 +84,13 @@ class PrototypicalNet(nn.Module):
             self.backbone = models.resnet50(pretrained=pretrained)
             self.out_dim = self.backbone.fc.in_features
             self.backbone.fc = nn.Identity()
+        # by default, we use the less complex ResNet18
         elif backbone_name == 'resnet18':
             self.backbone = models.resnet18(pretrained=pretrained)
             self.out_dim = self.backbone.fc.in_features
             self.backbone.fc = nn.Identity()
         else:
-            raise ValueError(f"Unsupported backbone: {backbone_name}")
+            raise ValueError(f"Unsupported : {backbone_name}")
 
     def forward(self, x):
         return self.backbone(x)
@@ -99,19 +98,18 @@ class PrototypicalNet(nn.Module):
     def compute_loss_and_acc(self, embeddings, n_way, k_shot, q_query):
         """
         Embeddings shape: (n_way * (k_shot + q_query), out_dim)
-        Assumes embeddings are ordered:
-        [class1_s1..sk, class1_q1..qq, class2_s1..sk, class2_q1..qq, ...]
         """
+
         device = embeddings.device
         
         # Reshape to (n_way, k_shot + q_query, out_dim)
         embeddings = embeddings.view(n_way, k_shot + q_query, -1)
         
-        # Split into support and query
-        support = embeddings[:, :k_shot, :]  # (n_way, k_shot, out_dim)
-        query = embeddings[:, k_shot:, :]    # (n_way, q_query, out_dim)
+        # Split into support and query sets
+        support = embeddings[:, :k_shot, :]
+        query = embeddings[:, k_shot:, :]
         
-        # Calculate prototypes
+        # Calculate prototypes (mean of the embeddings from the support set for each class)
         prototypes = support.mean(dim=1)     # (n_way, out_dim)
         
         # Reshape query for distance calculation
@@ -144,8 +142,6 @@ def train_epoch(model, dataloader, optimizer, n_way, k_shot, q_query, device):
     
     pbar = tqdm(dataloader, desc="Training")
     for batch_idx, (images, _) in enumerate(pbar):
-        # We don't need the actual dataset labels, only the episodic structure
-        # The sampler guarantees the ordering of the batch
         images = images.to(device)
         
         optimizer.zero_grad()
@@ -200,8 +196,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # 1. Prepare Dataset
-    # Basic augmentations as described in the proposal
+    # Dataset preparation (we modify the images so that the model sees diff. angles, lighting...)
+    # Train dataset
     train_transform = transforms.Compose([
         transforms.Resize((192, 192)),
         transforms.RandomHorizontalFlip(),
@@ -210,7 +206,7 @@ def main():
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
-    
+    # Validation dataset
     val_transform = transforms.Compose([
         transforms.Resize((192, 192)),
         transforms.ToTensor(),
@@ -220,11 +216,7 @@ def main():
     full_dataset = datasets.ImageFolder(args.data_dir)
     print(f"Found {len(full_dataset)} total images belonging to {len(full_dataset.classes)} classes.")
     
-    # Simple random split for train/val (80/20)
-    # Note: In standard few-shot learning, train/val classes are DISJOINT.
-    # However, since you want to train on standard pieces and test on standard pieces too
-    # initially (milestone 3), we split images, not classes.
-    # For actual few-shot evaluation on *new* piece styles, you'd evaluate on a separate dataset.
+    # Split for train/val (80/20)
     num_samples = len(full_dataset)
     indices = list(range(num_samples))
     random.shuffle(indices)
@@ -237,11 +229,11 @@ def main():
     val_dataset = Subset(full_dataset, val_idx)
     val_dataset.dataset.transform = val_transform
     
-    # We need the labels of the subset for the Episodic Sampler
+    # labels of the subset being used (epsodic sampler)
     train_labels = [full_dataset.targets[i] for i in train_idx]
     val_labels = [full_dataset.targets[i] for i in val_idx]
     
-    # Verify we have enough classes in our splits for N-way
+    # check we have enough classes
     unique_train_classes = len(set(train_labels))
     assert unique_train_classes >= args.n_way, f"Train split only has {unique_train_classes} classes, but n-way is {args.n_way}"
     
@@ -251,14 +243,14 @@ def main():
     train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, num_workers=0, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, num_workers=0, pin_memory=True)
     
-    # 2. Prepare Model
+    # Model
     model = PrototypicalNet(backbone_name=args.backbone, pretrained=True).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
     
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     
-    # 3. Training Loop
+    # Training loop
     best_val_acc = 0.0
     for epoch in range(1, args.epochs + 1):
         print(f"\nEpoch {epoch}/{args.epochs}")
@@ -276,7 +268,7 @@ def main():
             torch.save(model.state_dict(), save_path)
             print(f"Saved new best model to {save_path}!")
 
-    print(f"\nTraining complete. Best Validation Accuracy: {best_val_acc:.4f}")
+    print(f"\nTraining complete. Validation Accuracy: {best_val_acc:.4f}")
 
 
 if __name__ == '__main__':

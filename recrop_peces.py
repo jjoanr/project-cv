@@ -1,21 +1,11 @@
-"""
-Converteix els crops de peces_segmentades de crop_scale 2.2 a 1.8.
-
-Fa un center-crop proporcional i redimensiona a 192x192.
-Sobreescriu les imatges in-place.
-
-Ús:
-  python recrop_peces.py
-"""
-
 from pathlib import Path
 import cv2
 import numpy as np
 
-PECES_DIR    = Path("Dataset/Imatges_propies/peces_segmentades")
+PECES_DIR    = Path("Dataset/Imatges_propies/peces_segmentades_recrop")
 CROP_SIZE    = 192
-OLD_SCALE    = 2.2
-NEW_SCALE    = 1.8
+OLD_SCALE    = 1.8
+NEW_SCALE    = 1.4
 
 def recrop(img: np.ndarray, old_scale: float, new_scale: float, out_size: int) -> np.ndarray:
     h, w = img.shape[:2]

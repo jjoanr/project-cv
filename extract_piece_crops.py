@@ -1,19 +1,3 @@
-"""
-Extract enlarged piece crops from refined chessboard warps.
-
-The crop is centered on the labeled square but includes neighboring context so
-pieces are not cut off when perspective makes them extend outside the square.
-All occupied squares are exported. Empty squares use the "empty" label and are
-limited per board by default so the training set does not get dominated by
-empty examples. By default the output is organized by class, which is the
-layout expected by most training loaders.
-
-Examples:
-  python extract_piece_crops.py
-  python extract_piece_crops.py --images 0,1,10 --save-debug
-  python extract_piece_crops.py --images all --crop-scale 2.2
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -44,8 +28,8 @@ WHITE = (255, 255, 255)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", default="Dataset/data")
-    parser.add_argument("--out-dir", default="Dataset/piece_crops")
+    parser.add_argument("--data", default="DATASET/data")
+    parser.add_argument("--out-dir", default="DATASET/piece_crops")
     parser.add_argument("--images", default="all", help="Comma-separated numeric image stems, or 'all'.")
     parser.add_argument("--layout", choices=("by-piece", "by-image"), default="by-piece")
     parser.add_argument("--save-debug", action="store_true", help="Also save annotated crops and contact sheets.")
